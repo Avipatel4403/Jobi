@@ -1,0 +1,22 @@
+[tool.poetry]
+name = "jobi"
+version = "0.1.0"
+description = "LLM CLI tool for professional writing with RAG"
+authors = ["Avi Patel"]
+readme = "README.md"
+
+[tool.poetry.scripts]
+jobi = "jobi.cli:main"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+chromadb = "^1.1.0"
+click = "^8.3.0"
+ollama = "^0.5.4"
+requests = "^2.32.5"
+beautifulsoup4 = "^4.13.5"
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
