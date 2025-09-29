@@ -1,5 +1,6 @@
 """Core RAG System with ChromaDB"""
 
+import os
 import chromadb
 import time
 from typing import List, Dict, Any, Optional
@@ -12,20 +13,37 @@ from .ingestion import DocumentIngester
 logger = logging.getLogger(__name__)
 
 
+def get_default_chromadb_path() -> str:
+    """Get the default ChromaDB path relative to the project root"""
+    # Find the project root (where pyproject.toml should be)
+    current_path = Path(__file__).parent
+    while current_path.parent != current_path:
+        if (current_path / "pyproject.toml").exists():
+            return str(current_path / "data" / "chromadb")
+        current_path = current_path.parent
+    
+    # Fallback to relative path
+    return "./data/chromadb"
+
+
 class RAGSystem:
     """Enhanced RAG system with pluggable chunking strategies"""
     
     def __init__(self, 
-                 persist_directory: str = "./data/chromadb",
+                 persist_directory: Optional[str] = None,
                  collection_name: str = "user_profile",
                  chunker: Optional[BaseChunker] = None):
         """Initialize ChromaDB client and collection
         
         Args:
-            persist_directory: Directory to persist ChromaDB data
+            persist_directory: Directory to persist ChromaDB data (defaults to data/chromadb)
             collection_name: Name of the ChromaDB collection
             chunker: Custom chunking strategy (defaults to DefaultChunker)
         """
+        # Use default path if none provided
+        if persist_directory is None:
+            persist_directory = get_default_chromadb_path()
+        
         self.persist_directory = persist_directory
         self.collection_name = collection_name
         self.chunker = chunker or DefaultChunker()
@@ -33,19 +51,22 @@ class RAGSystem:
         # Create persist directory if it doesn't exist
         Path(persist_directory).mkdir(parents=True, exist_ok=True)
         
+        # Log the actual path being used
+        logger.info(f"Using ChromaDB persist directory: {os.path.abspath(persist_directory)}")
+        
         # Initialize ChromaDB client
         self.client = chromadb.PersistentClient(path=persist_directory)
         
         # Get or create collection
         try:
             self.collection = self.client.get_collection(name=self.collection_name)
-            logger.info(f"Loaded existing collection '{self.collection_name}'")
-        except:
+            logger.info(f"Loaded existing collection '{self.collection_name}' with {self.collection.count()} chunks")
+        except Exception as e:
+            logger.info(f"Creating new collection '{self.collection_name}': {e}")
             self.collection = self.client.create_collection(
                 name=self.collection_name,
                 metadata={"description": "User profile data for RAG"}
             )
-            logger.info(f"Created new collection '{self.collection_name}'")
         
         # Initialize ingester
         self.ingester = DocumentIngester(self.collection, self.chunker)
