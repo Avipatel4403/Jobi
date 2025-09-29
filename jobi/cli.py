@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-from .rag import RAGSystem
+from .rag import RAGSystem, DefaultChunker, SemanticChunker, DocumentTypeChunker
 from .ollama_client import OllamaClient
 from .chat import ChatHandler
 
@@ -23,9 +23,9 @@ def main(ctx):
     # Ensure context object exists
     ctx.ensure_object(dict)
     
-    # Initialize RAG system
+    # Initialize RAG system with default chunker
     try:
-        ctx.obj['rag'] = RAGSystem()
+        ctx.obj['rag'] = RAGSystem(chunker=DocumentTypeChunker())
     except Exception as e:
         click.echo(f"Error initializing RAG system: {e}", err=True)
         sys.exit(1)
@@ -193,19 +193,46 @@ def chat(ctx, model: str, company: Optional[str], query: Optional[str], context_
 @main.command()
 @click.argument('query')
 @click.option('--limit', '-l', default=5, help='Number of results to return (default: 5)')
+@click.option('--chunker', '-c', 
+              type=click.Choice(['default', 'semantic', 'document_type']), 
+              default='document_type',
+              help='Chunking strategy for comparison')
+@click.option('--multi-stage', '-ms', is_flag=True, help='Use multi-stage retrieval')
+@click.option('--cluster', is_flag=True, help='Use cluster-based retrieval')
 @click.option('--show-metadata', '-m', is_flag=True, help='Show chunk metadata')
 @click.pass_context
-def search(ctx, query: str, limit: int, show_metadata: bool):
-    """Search your profile data for relevant information.
+def search(ctx, query: str, limit: int, chunker: str, multi_stage: bool, cluster: bool, show_metadata: bool):
+    """Search your profile data for relevant information with enhanced retrieval.
     
     QUERY: Search query to find relevant context
     """
-    rag_system = ctx.obj['rag']
+    # Initialize chunker
+    chunker_map = {
+        'default': DefaultChunker(),
+        'semantic': SemanticChunker(),
+        'document_type': DocumentTypeChunker()
+    }
+    
+    rag_system = RAGSystem(chunker=chunker_map[chunker])
     
     click.echo(f"🔍 Searching for: '{query}'")
-    click.echo()
+    click.echo(f"📋 Chunker: {chunker}")
     
-    results = rag_system.query(query, n_results=limit)
+    # Choose retrieval method
+    if multi_stage:
+        click.echo("🎯 Using multi-stage retrieval")
+        results = rag_system.multi_stage_query(query, final_results=limit)
+        if 'scores' in results:
+            click.echo(f"📊 Relevance scores included")
+    elif cluster:
+        click.echo("🗂️  Using cluster-based retrieval")
+        results = rag_system.cluster_based_retrieval(query, n_results=limit)
+        if 'cluster_info' in results:
+            click.echo(f"📊 Clusters: {results['cluster_info']}")
+    else:
+        results = rag_system.query(query, n_results=limit)
+    
+    click.echo()
     
     if not results['chunks']:
         click.echo("No relevant chunks found.")
@@ -217,7 +244,13 @@ def search(ctx, query: str, limit: int, show_metadata: bool):
     for i, (chunk, metadata) in enumerate(zip(results['chunks'], results['metadata'])):
         click.echo(f"📄 Result {i + 1}:")
         click.echo(f"   File: {metadata.get('filename', 'Unknown')}")
+        click.echo(f"   Type: {metadata.get('document_type', 'unknown')}")
+        click.echo(f"   Chunker: {metadata.get('chunker_type', 'unknown')}")
         click.echo(f"   Chunk: {metadata.get('chunk_index', 0) + 1}/{metadata.get('chunk_count', 1)}")
+        
+        if 'scores' in results:
+            click.echo(f"   Score: {results['scores'][i]:.3f}")
+        
         click.echo()
         click.echo(f"   Content: {chunk[:200]}{'...' if len(chunk) > 200 else ''}")
         
@@ -225,6 +258,110 @@ def search(ctx, query: str, limit: int, show_metadata: bool):
             click.echo(f"   Metadata: {metadata}")
         
         click.echo()
+
+
+@main.command()
+@click.argument('path')
+@click.option('--recursive', '-r', is_flag=True, help='Process subdirectories recursively')
+@click.option('--patterns', '-p', multiple=True, help='File patterns to match (e.g., *.txt *.md)')
+@click.option('--chunker', '-c', 
+              type=click.Choice(['default', 'semantic', 'document_type']), 
+              default='document_type',
+              help='Chunking strategy to use')
+@click.option('--metadata', '-m', multiple=True, help='Metadata key=value pairs')
+@click.pass_context
+def ingest_folder(ctx, path: str, recursive: bool, patterns: tuple, chunker: str, metadata: tuple):
+    """Ingest all documents in a folder with enhanced processing.
+    
+    PATH: Path to the folder containing documents
+    """
+    # Parse metadata
+    meta_dict = {}
+    for item in metadata:
+        if '=' in item:
+            key, value = item.split('=', 1)
+            meta_dict[key] = value
+    
+    # Initialize chunker
+    chunker_map = {
+        'default': DefaultChunker(),
+        'semantic': SemanticChunker(),
+        'document_type': DocumentTypeChunker()
+    }
+    
+    rag = RAGSystem(chunker=chunker_map[chunker])
+    
+    # Convert patterns tuple to list
+    file_patterns = list(patterns) if patterns else None
+    
+    click.echo(f"📁 Ingesting folder: {path}")
+    click.echo(f"📋 Chunker: {chunker}")
+    click.echo(f"🔄 Recursive: {recursive}")
+    if file_patterns:
+        click.echo(f"🎯 Patterns: {file_patterns}")
+    
+    results = rag.ingest_folder(path, recursive, file_patterns, meta_dict)
+    
+    # Display results
+    click.echo(f"\n📊 Ingestion Results:")
+    click.echo(f"   Total files found: {results['total_files']}")
+    click.echo(f"   ✅ Successful: {results['summary']['total_successful']}")
+    click.echo(f"   ❌ Failed: {results['summary']['total_failed']}")
+    click.echo(f"   📈 Success rate: {results['summary']['success_rate']:.1%}")
+    
+    if results['failed']:
+        click.echo(f"\n❌ Failed files:")
+        for failed_file in results['failed']:
+            click.echo(f"   - {failed_file}")
+
+
+@main.command()
+@click.argument('filename')
+@click.pass_context
+def verify(ctx, filename: str):
+    """Verify source document integrity.
+    
+    FILENAME: Name of the file to verify
+    """
+    rag_system = ctx.obj['rag']
+    integrity_check = rag_system.verify_source_integrity(filename)
+    
+    if integrity_check["status"] == "verified":
+        click.echo(f"✅ {filename}: Source integrity preserved")
+        click.echo(f"   📊 Chunks: {integrity_check['chunk_count']}")
+        click.echo(f"   🔐 Hash: {integrity_check['original_hash'][:16]}...")
+        click.echo(f"   ✓ Integrity: {integrity_check['integrity_preserved']}")
+    elif integrity_check["status"] == "not_found":
+        click.echo(f"❌ {filename}: Document not found in RAG system")
+    else:
+        click.echo(f"❌ {filename}: {integrity_check['status']}")
+
+
+@main.command()
+@click.pass_context
+def stats(ctx):
+    """Show comprehensive RAG system statistics."""
+    rag_system = ctx.obj['rag']
+    stats = rag_system.get_collection_stats()
+    
+    if not stats:
+        click.echo("❌ Unable to retrieve statistics")
+        return
+    
+    click.echo("📊 RAG System Statistics:")
+    click.echo(f"   📄 Total documents: {stats.get('total_documents', 0)}")
+    click.echo(f"   📝 Total chunks: {stats.get('total_chunks', 0)}")
+    click.echo(f"   ✅ Original content chunks: {stats.get('original_content_chunks', 0)}")
+    click.echo(f"   📏 Total characters: {stats.get('total_characters', 0):,}")
+    click.echo(f"   🏷️  Collection name: {stats.get('collection_name', 'unknown')}")
+    click.echo(f"   ⚙️  Chunker type: {stats.get('chunker_type', 'unknown')}")
+    
+    # Document types breakdown
+    doc_types = stats.get('document_types', {})
+    if doc_types:
+        click.echo(f"\n📋 Document types:")
+        for doc_type, count in doc_types.items():
+            click.echo(f"   • {doc_type}: {count} chunks")
 
 
 if __name__ == '__main__':
