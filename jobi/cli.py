@@ -8,6 +8,7 @@ from typing import Optional
 from .rag import RAGSystem, DefaultChunker, SemanticChunker, DocumentTypeChunker
 from .ollama_client import OllamaClient
 from .chat import ChatHandler
+from .web import OllamaWebSearch
 
 
 @click.group()
@@ -362,6 +363,104 @@ def stats(ctx):
         click.echo(f"\n📋 Document types:")
         for doc_type, count in doc_types.items():
             click.echo(f"   • {doc_type}: {count} chunks")
+
+
+@main.command()
+@click.argument('query')
+@click.option('--max-results', '-n', default=5, help='Maximum number of results (default: 5, max: 10)')
+@click.option('--api-key', help='Ollama API key (or set OLLAMA_API_KEY env var)')
+@click.option('--json-output', '-j', is_flag=True, help='Output results as JSON')
+def websearch(query: str, max_results: int, api_key: Optional[str], json_output: bool):
+    """Search the web using Ollama's web search API.
+    
+    QUERY: Search query string
+    
+    Note: Requires OLLAMA_API_KEY environment variable or --api-key option.
+    Get your API key at: https://ollama.com/settings/keys
+    """
+    try:
+        web_search = OllamaWebSearch(api_key=api_key)
+        
+        click.echo(f"🔍 Searching the web for: '{query}'")
+        click.echo()
+        
+        results = web_search.web_search(query, max_results)
+        
+        if json_output:
+            import json
+            output = {
+                "query": query,
+                "results": [r.to_dict() for r in results]
+            }
+            click.echo(json.dumps(output, indent=2))
+        else:
+            if not results:
+                click.echo("No results found.")
+                return
+            
+            click.echo(f"Found {len(results)} results:\n")
+            
+            for i, result in enumerate(results, 1):
+                click.echo(f"📄 Result {i}: {result.title}")
+                click.echo(f"   🔗 {result.url}")
+                click.echo(f"   📝 {result.content[:200]}{'...' if len(result.content) > 200 else ''}")
+                click.echo()
+        
+    except ValueError as e:
+        click.echo(f"❌ {e}", err=True)
+        click.echo("\nGet your API key at: https://ollama.com/settings/keys", err=True)
+        sys.exit(1)
+    except Exception as e:
+        click.echo(f"❌ Error during web search: {e}", err=True)
+        sys.exit(1)
+
+
+@main.command()
+@click.argument('url')
+@click.option('--api-key', help='Ollama API key (or set OLLAMA_API_KEY env var)')
+@click.option('--json-output', '-j', is_flag=True, help='Output result as JSON')
+@click.option('--show-links', '-l', is_flag=True, help='Show all links found on the page')
+def webfetch(url: str, api_key: Optional[str], json_output: bool, show_links: bool):
+    """Fetch content from a URL using Ollama's web fetch API.
+    
+    URL: The URL to fetch content from
+    
+    Note: Requires OLLAMA_API_KEY environment variable or --api-key option.
+    Get your API key at: https://ollama.com/settings/keys
+    """
+    try:
+        web_search = OllamaWebSearch(api_key=api_key)
+        
+        click.echo(f"🌐 Fetching content from: {url}")
+        click.echo()
+        
+        result = web_search.web_fetch(url)
+        
+        if json_output:
+            import json
+            output = result.to_dict()
+            click.echo(json.dumps(output, indent=2))
+        else:
+            click.echo(f"📄 Title: {result.title}")
+            click.echo()
+            click.echo(f"📝 Content:")
+            click.echo(result.content)
+            click.echo()
+            
+            if show_links:
+                click.echo(f"🔗 Links found ({len(result.links)}):")
+                for link in result.links:
+                    click.echo(f"   • {link}")
+            else:
+                click.echo(f"🔗 {len(result.links)} links found (use --show-links to display)")
+        
+    except ValueError as e:
+        click.echo(f"❌ {e}", err=True)
+        click.echo("\nGet your API key at: https://ollama.com/settings/keys", err=True)
+        sys.exit(1)
+    except Exception as e:
+        click.echo(f"❌ Error during web fetch: {e}", err=True)
+        sys.exit(1)
 
 
 if __name__ == '__main__':

@@ -226,3 +226,7 @@ chroma.sqlite3
 # ChromaDB (additional patterns)
 .chroma/
 chroma/
+
+#ignore .github
+.github/
+examples/

@@ -5,7 +5,8 @@ A local CLI tool that combines your personal context (resume, work history, skil
 ## 🚀 Features
 
 - **Local RAG System**: Uses ChromaDB to store and retrieve your personal profile data
-- **Local LLM Integration**: Powered by Ollama (no API keys required)
+- **Local LLM Integration**: Powered by Ollama (no API keys required for chat)
+- **Web Search Integration**: Search the web using Ollama's web search API
 - **Smart Context Retrieval**: Automatically finds relevant information from your profile
 - **Professional Writing**: Generates tailored cover letters, cold emails, and application responses
 - **Automatic Saving**: Saves all generated content with organized naming
@@ -41,6 +42,15 @@ A local CLI tool that combines your personal context (resume, work history, skil
    ollama pull gemma3:latest
    # or
    ollama pull llama3.2
+   ```
+
+5. **(Optional) Set up web search** - If you want to use web search features:
+   ```bash
+   # Copy the example .env file
+   cp .env.example .env
+   
+   # Edit .env and add your API key from https://ollama.com/settings/keys
+   # OLLAMA_API_KEY=your-actual-api-key-here
    ```
 
 ## 📖 Usage
@@ -111,7 +121,78 @@ poetry run jobi chat --company "Google" --query "Write a cover letter for SWE ro
 poetry run jobi chat --context-limit 10
 ```
 
-### 6. Manage Documents
+### 6. Web Search (Requires Ollama API Key)
+
+Search the web using Ollama's web search API:
+
+```bash
+# Method 1: Create a .env file (RECOMMENDED)
+# Create a .env file in the project root with your API key
+echo 'OLLAMA_API_KEY=your-api-key-here' > .env
+
+# The key will be automatically loaded when you run commands
+poetry run jobi websearch "What is Ollama?"
+
+# Method 2: Export as environment variable (session only)
+export OLLAMA_API_KEY='your-api-key-here'
+poetry run jobi websearch "What is Ollama?"
+
+# Method 3: Pass directly to command
+poetry run jobi websearch "What is Ollama?" --api-key "your-api-key"
+```
+
+**Get your API key:**
+1. Create a free account at [https://ollama.com](https://ollama.com)
+2. Get your API key from [https://ollama.com/settings/keys](https://ollama.com/settings/keys)
+3. Add it to `.env` file in the project root
+
+**Examples:**
+
+```bash
+# Search the web
+poetry run jobi websearch "Python frameworks" --max-results 3
+
+# Get JSON output
+poetry run jobi websearch "AI news" --json-output
+
+# Fetch content from a specific URL
+poetry run jobi webfetch "https://ollama.com"
+
+# Show all links found on the page
+poetry run jobi webfetch "https://ollama.com" --show-links
+```
+
+**Using in Python scripts:**
+
+```python
+from jobi.web import OllamaWebSearch
+
+# API key is automatically loaded from .env file or environment
+# No need to pass it explicitly!
+web_search = OllamaWebSearch()
+
+# Search the web
+results = web_search.web_search("What is Ollama?", max_results=5)
+for result in results:
+    print(f"{result.title}: {result.url}")
+    print(f"{result.content}\n")
+
+# Fetch a specific URL
+page = web_search.web_fetch("https://ollama.com")
+print(f"Title: {page.title}")
+print(f"Content: {page.content}")
+print(f"Links: {page.links}")
+
+# Or use convenience functions
+from jobi.web import web_search, web_fetch
+
+results = web_search("Python programming", max_results=3)
+page = web_fetch("https://example.com")
+```
+
+See `examples/web_search_examples.py` and `examples/search_agent_example.py` for more detailed examples.
+
+### 7. Manage Documents
 
 ```bash
 # Remove a document
@@ -127,17 +208,52 @@ poetry run jobi remove old_resume.txt --confirm
 jobi/
 ├── jobi/
 │   ├── __init__.py
-│   ├── cli.py          # Main CLI interface
-│   ├── rag.py          # ChromaDB RAG system
-│   ├── ollama_client.py # Ollama integration
-│   └── chat.py         # Chat handler and generation logic
-├── outputs/            # Generated content saved here
-├── chroma_db/          # ChromaDB persistence (created automatically)
-├── sample_resume.txt   # Example resume file
-└── pyproject.toml      # Poetry configuration
+│   ├── cli.py              # Main CLI interface
+│   ├── rag/                # RAG system modules
+│   │   ├── core.py         # ChromaDB RAG system
+│   │   ├── chunkers.py     # Document chunking strategies
+│   │   ├── ingestion.py    # Document ingestion
+│   │   └── utils.py        # Utility functions
+│   ├── web/                # Web search module
+│   │   ├── __init__.py     # Module exports
+│   │   ├── models.py       # Data models
+│   │   └── client.py       # API client
+│   ├── ollama_client.py    # Ollama integration
+│   └── chat.py             # Chat handler and generation logic
+├── docs/
+│   └── WEB_SEARCH.md       # Web search documentation
+├── examples/
+│   ├── web_search_examples.py      # Web search examples
+│   ├── search_agent_example.py     # Search agent with LLM
+│   └── custom_chunking_examples.py # Chunking examples
+├── data/
+│   └── chromadb/           # ChromaDB persistence
+├── outputs/                # Generated content saved here
+├── .env                    # API keys (git-ignored)
+└── pyproject.toml          # Poetry configuration
 ```
 
 ## 🔧 Configuration
+
+### Ollama API Key (for Web Search)
+
+To use the web search features, you need an Ollama API key:
+
+1. Create a free account at [https://ollama.com](https://ollama.com)
+2. Get your API key at [https://ollama.com/settings/keys](https://ollama.com/settings/keys)
+3. **Add to `.env` file** (recommended):
+
+```bash
+# Create .env file in project root
+echo 'OLLAMA_API_KEY=your-actual-api-key-here' > .env
+```
+
+The `.env` file is already in `.gitignore`, so your API key will be safe and won't be committed to git.
+
+**Alternative methods:**
+- Export in shell (temporary): `export OLLAMA_API_KEY='your-key'`
+- Pass to command: `jobi websearch "query" --api-key "your-key"`
+- Add to shell profile for persistence: `echo 'export OLLAMA_API_KEY="your-key"' >> ~/.zshrc`
 
 ### Model Selection
 
@@ -155,7 +271,7 @@ ollama pull mistral
 
 ### ChromaDB Storage
 
-ChromaDB data is stored in `./chroma_db/` directory. This persists your profile data between sessions.
+ChromaDB data is stored in `./data/chromadb/` directory. This persists your profile data between sessions.
 
 ## 📝 Example Workflow
 
@@ -206,9 +322,19 @@ poetry run jobi chat --company "https://openai.com" --query "Write a cold email 
 poetry run jobi search "machine learning projects"
 poetry run jobi search "leadership experience"
 
+# Web search examples (requires OLLAMA_API_KEY in .env file)
+poetry run jobi websearch "Latest AI trends 2025"
+poetry run jobi websearch "Python async programming" --max-results 5
+poetry run jobi webfetch "https://docs.python.org" --show-links
+
+# Run example scripts
+python examples/web_search_examples.py
+python examples/search_agent_example.py
+
 # Management
 poetry run jobi remove old_resume.txt
 poetry run jobi list --verbose
+poetry run jobi stats
 ```
 
 ## 🚨 Troubleshooting
@@ -250,5 +376,14 @@ This project is licensed under the MIT License.
 ## 🙏 Acknowledgments
 
 - [ChromaDB](https://www.trychroma.com/) for the vector database
-- [Ollama](https://ollama.ai/) for local LLM serving
+- [Ollama](https://ollama.ai/) for local LLM serving and web search API
 - [Click](https://click.palletsprojects.com/) for the CLI framework
+
+---
+
+## 📚 Additional Resources
+
+- [Ollama Documentation](https://docs.ollama.com/)
+- [Ollama Web Search API](https://docs.ollama.com/web-search)
+- [ChromaDB Documentation](https://docs.trychroma.com/)
+- [Examples Directory](./examples/) - See working code examples
