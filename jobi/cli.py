@@ -4,6 +4,10 @@ import click
 import sys
 from pathlib import Path
 from typing import Optional
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 from .rag import RAGSystem, DefaultChunker, SemanticChunker, DocumentTypeChunker
 from .ollama_client import OllamaClient
