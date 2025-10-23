@@ -8,9 +8,11 @@ from typing import Optional
 import requests
 from bs4 import BeautifulSoup
 import logging
+import os
 
 from .rag import RAGSystem
 from .ollama_client import OllamaClient
+from .web import OllamaWebSearch
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -30,6 +32,15 @@ class ChatHandler:
         self.ollama_client = ollama_client
         self.outputs_dir = Path("./outputs")
         self.outputs_dir.mkdir(exist_ok=True)
+        
+        # Initialize web search client if API key is available
+        self.web_search_client = None
+        try:
+            if os.getenv("OLLAMA_API_KEY"):
+                self.web_search_client = OllamaWebSearch()
+                logger.info("Web search client initialized")
+        except Exception as e:
+            logger.info(f"Web search not available: {e}")
     
     def run_interactive_session(
         self, 
@@ -57,21 +68,25 @@ class ChatHandler:
             click.echo(f"📊 Your profile: {stats.get('total_documents', 0)} documents, {stats.get('total_chunks', 0)} chunks")
             click.echo()
         
-        # Get company information
-        if not company:
-            company = click.prompt("🏢 Company name or URL", type=str)
-        
-        company_info = self._get_company_info(company)
-        
-        # Get user query
+        # Get query with loop until valid input
         if not query:
-            query = click.prompt("✍️  What would you like me to write", type=str)
+            while True:
+                query = click.prompt("✍️  Enter company name or URL", type=str, default="").strip()
+                if query:
+                    break
+                click.echo("⚠️  Query cannot be empty. Please try again.")
+        
+        # Detect if query is URL or company name and get company info
+        company_info = self._get_company_info_smart(query)
+        
+        # Get writing task
+        writing_task = click.prompt("✍️  What would you like me to write", type=str)
         
         # Retrieve relevant context
         click.echo("\n🔍 Retrieving relevant context from your profile...")
         
         context_results = self.rag_system.query(
-            f"{query} {company_info.get('name', '')}",
+            f"{writing_task} {company_info.get('name', '')}",
             n_results=context_limit
         )
         
@@ -95,7 +110,7 @@ class ChatHandler:
         
         full_response = self._generate_response(
             company_info=company_info,
-            user_query=query,
+            user_query=writing_task,
             context_results=context_results
         )
         
@@ -109,7 +124,7 @@ class ChatHandler:
         # Save response
         filename = self._save_response(
             company_name=company_info.get('name', 'unknown'),
-            query=query,
+            query=writing_task,
             content=full_response
         )
         
@@ -118,7 +133,93 @@ class ChatHandler:
         
         # Ask if user wants to regenerate or modify
         if click.confirm("Would you like to regenerate with different parameters?"):
-            self.run_interactive_session(company=company, context_limit=context_limit)
+            self.run_interactive_session(company=None, query=None, context_limit=context_limit)
+    
+    def _is_url(self, text: str) -> bool:
+        """Check if text is a URL
+        
+        Args:
+            text: Text to check
+            
+        Returns:
+            True if text appears to be a URL
+        """
+        url_pattern = re.compile(
+            r'^(https?://|www\.)'  # http://, https://, or www.
+            r'|'
+            r'.*\.(com|org|net|edu|gov|io|co|ai|dev|app|tech|info|biz|me|us|uk|ca|de|fr|jp|cn|in|au|br|mx|ru|za|nl|se|ch|es|it|pl|be|at|dk|no|fi|ie|nz|sg|hk|kr|tw|my|th|ph|vn|id|pk|bd|ng|eg|ke|ug|tz|gh|zm|zw|mw|ls|sz|bw|na|ao|mz|cd|cg|ga|cm|cf|td|ne|ml|bf|bj|tg|ci|sn|gm|gn|sl|lr|mr)(/|$)'  # common TLDs
+            , re.IGNORECASE
+        )
+        return bool(url_pattern.search(text))
+    
+    def _get_company_info_smart(self, query: str) -> dict:
+        """Smart detection of URL vs company name and fetch appropriate info
+        
+        Args:
+            query: User input (URL or company name)
+            
+        Returns:
+            Dictionary with company information
+        """
+        company_info = {"name": query, "description": ""}
+        
+        # Check if input is a URL
+        if self._is_url(query):
+            click.echo(f"🔗 Detected URL, fetching content...")
+            
+            # Use webfetch if web search client is available
+            if self.web_search_client:
+                try:
+                    url = query if query.startswith('http') else f"https://{query}"
+                    result = self.web_search_client.web_fetch(url)
+                    
+                    company_info['name'] = result.title
+                    company_info['description'] = result.content[:500] + "..." if len(result.content) > 500 else result.content
+                    company_info['url'] = url
+                    
+                    click.echo(f"   ✅ Fetched: {result.title}")
+                    return company_info
+                    
+                except Exception as e:
+                    logger.warning(f"Web fetch failed: {e}")
+                    click.echo(f"   ⚠️  Web fetch failed, falling back to basic scraping")
+            
+            # Fallback to basic URL scraping
+            return self._get_company_info(query)
+        
+        else:
+            click.echo(f"🏢 Detected company name, searching web...")
+            
+            # Use websearch if web search client is available
+            if self.web_search_client:
+                try:
+                    results = self.web_search_client.web_search(query, max_results=3)
+                    
+                    if results:
+                        # Use first result for company info
+                        first_result = results[0]
+                        company_info['name'] = query
+                        company_info['description'] = first_result.content
+                        company_info['url'] = first_result.url
+                        
+                        click.echo(f"   ✅ Found: {first_result.title}")
+                        click.echo(f"   🔗 Source: {first_result.url}")
+                        return company_info
+                    else:
+                        click.echo("   ⚠️  No search results found")
+                        
+                except Exception as e:
+                    logger.warning(f"Web search failed: {e}")
+                    click.echo(f"   ⚠️  Web search failed: {e}")
+                    if "API key" in str(e):
+                        click.echo("   💡 Set OLLAMA_API_KEY in .env for web search functionality")
+            else:
+                click.echo("   💡 Web search not available (no OLLAMA_API_KEY found)")
+            
+            # Fallback: just use the company name
+            company_info['name'] = query
+            company_info['description'] = f"Information about {query}"
+            return company_info
     
     def _get_company_info(self, company_input: str) -> dict:
         """Get company information from name or URL

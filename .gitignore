@@ -230,3 +230,5 @@ chroma/
 #ignore .github
 .github/
 examples/
+
+outputs/

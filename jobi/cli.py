@@ -160,19 +160,20 @@ def remove(ctx, filename: str, confirm: bool):
 
 @main.command()
 @click.option('--model', '-m', default='gemma3', help='Ollama model to use (default: gemma3)')
-@click.option('--company', '-c', help='Company name or URL')
-@click.option('--query', '-q', help='Your query/request')
 @click.option('--context-limit', default=5, help='Number of context chunks to retrieve (default: 5)')
 @click.pass_context
-def chat(ctx, model: str, company: Optional[str], query: Optional[str], context_limit: int):
+def chat(ctx, model: str, context_limit: int):
     """Start an interactive chat session for generating professional writing.
     
     This command will:
-    1. Ask for company information (if not provided)
-    2. Ask for your writing request (if not provided)
-    3. Retrieve relevant context from your profile
-    4. Generate professional content using Ollama
-    5. Save the output to a file
+    1. Prompt for company name or URL (with validation loop)
+    2. Detect if input is URL (for webfetch) or company name (for websearch)
+    3. Ask for your writing request
+    4. Retrieve relevant context from your profile
+    5. Generate professional content using Ollama
+    6. Save the output to a file
+    
+    Note: Web search/fetch requires OLLAMA_API_KEY in .env file
     """
     rag_system = ctx.obj['rag']
     
@@ -183,10 +184,10 @@ def chat(ctx, model: str, company: Optional[str], query: Optional[str], context_
         # Initialize chat handler
         chat_handler = ChatHandler(rag_system, ollama_client)
         
-        # Run interactive chat
+        # Run interactive chat (no company/query passed - will prompt)
         chat_handler.run_interactive_session(
-            company=company,
-            query=query,
+            company=None,
+            query=None,
             context_limit=context_limit
         )
         
